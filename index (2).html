@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Diet Tracker" />
+  <link rel="apple-touch-icon" href="icon.png" />
+  <title>Diet Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: #f0f4f8; }
+    body { font-family: 'DM Sans', sans-serif; -webkit-tap-highlight-color: transparent; }
+    input, select, button { outline: none; }
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    ::-webkit-scrollbar { display: none; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // ── CONSTANTS ────────────────────────────────────────────────────────────────
+    const MEAL_KEYS = ["colazione", "spuntino", "pranzo", "merenda", "cena"];
+    const MEAL_LABELS = { colazione:"Colazione", spuntino:"Spuntino", pranzo:"Pranzo", merenda:"Merenda", cena:"Cena" };
+    const MEAL_ICONS  = { colazione:"☀️", spuntino:"🍎", pranzo:"🍽️", merenda:"🫐", cena:"🌙" };
+    const DEFAULT_TARGETS = {
+      colazione: { kcal:475,  protein:30, carbs:55 },
+      spuntino:  { kcal:300,  protein:15, carbs:35 },
+      pranzo:    { kcal:825,  protein:50, carbs:90 },
+      merenda:   { kcal:525,  protein:25, carbs:60 },
+      cena:      { kcal:875,  protein:55, carbs:85 },
+    };
+    const PROTEIN_GROUPS = [
+      { key:"uova",       label:"Uova",       emoji:"🥚", target:3 },
+      { key:"pollo",      label:"Pollo",      emoji:"🍗", target:2 },
+      { key:"pasta",      label:"Pasta",      emoji:"🍝", target:2 },
+      { key:"pesce",      label:"Pesce",      emoji:"🐟", target:2 },
+      { key:"legumi",     label:"Legumi",     emoji:"🫘", target:2 },
+      { key:"carne_rossa",label:"Carne Rossa",emoji:"🥩", target:2 },
+    ];
+    const CATEGORY_OPTIONS = [
+      { value:"uova",       label:"🥚 Uova" },
+      { value:"pollo",      label:"🍗 Pollo" },
+      { value:"pasta",      label:"🍝 Pasta" },
+      { value:"pesce",      label:"🐟 Pesce" },
+      { value:"legumi",     label:"🫘 Legumi" },
+      { value:"carne_rossa",label:"🥩 Carne Rossa" },
+      { value:"altro",      label:"🔹 Altro" },
+    ];
+
+    // ── UTILS ────────────────────────────────────────────────────────────────────
+    function getTodayKey() { return new Date().toISOString().split("T")[0]; }
+    function getWeekKey(date = new Date()) {
+      const d = new Date(date);
+      const day = d.getDay();
+      const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+      d.setDate(diff);
+      return d.toISOString().split("T")[0];
+    }
+    function load(key, fallback) {
+      try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
+      catch { return fallback; }
+    }
+    function save(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
+    function calcMacros(items, ingredients) {
+      let kcal=0, protein=0, carbs=0, fat=0;
+      for (const item of items) {
+        const ing = ingredients.find(i => i.id === item.ingredientId);
+        if (!ing) continue;
+        const f = item.grams / 100;
+        kcal += ing.kcal * f; protein += ing.protein * f;
+        carbs += ing.carbs * f; fat += (ing.fat||0) * f;
+      }
+      return { kcal, protein, carbs, fat };
+    }
+
+    // ── PROGRESS RING ────────────────────────────────────────────────────────────
+    function ProgressRing({ pct, size=56, color="#16a34a" }) {
+      const r = (size-8)/2, circ = 2*Math.PI*r;
+      const dash = Math.min(pct/100,1)*circ, over = pct>100;
+      return (
+        <svg width={size} height={size} style={{transform:"rotate(-90deg)"}}>
+          <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#e2e8f0" strokeWidth={6}/>
+          <circle cx={size/2} cy={size/2} r={r} fill="none"
+            stroke={over?"#ef4444":color} strokeWidth={6}
+            strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"
+            style={{transition:"stroke-dasharray 0.4s ease"}}/>
+          <text x="50%" y="50%" textAnchor="middle" dominantBaseline="central"
+            fill={over?"#ef4444":"#334155"} fontSize={size<50?9:11}
+            fontFamily="'DM Mono',monospace"
+            style={{transform:"rotate(90deg)",transformOrigin:"center"}}>
+            {Math.round(pct)}%
+          </text>
+        </svg>
+      );
+    }
+
+    // ── MACRO BAR ────────────────────────────────────────────────────────────────
+    function MacroBar({ label, value, target, color }) {
+      const pct = Math.min((value/target)*100,100), over = value>target;
+      return (
+        <div style={{flex:1}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+            <span style={{fontSize:11,color:"#64748b",fontFamily:"'DM Mono',monospace",textTransform:"uppercase",letterSpacing:1}}>{label}</span>
+            <span style={{fontSize:11,color:over?"#ef4444":"#0f172a",fontFamily:"'DM Mono',monospace"}}>
+              {Math.round(value)}<span style={{color:"#94a3b8"}}>/{target}</span>
+            </span>
+          </div>
+          <div style={{height:6,background:"#e2e8f0",borderRadius:3,overflow:"hidden"}}>
+            <div style={{height:"100%",width:`${pct}%`,background:over?"#ef4444":color,borderRadius:3,transition:"width 0.4s ease"}}/>
+          </div>
+        </div>
+      );
+    }
+
+    // ── SETTINGS PANEL ───────────────────────────────────────────────────────────
+    function SettingsPanel({ targets, onSave, onClose, history, ingredients }) {
+      const [draft, setDraft] = useState(JSON.parse(JSON.stringify(targets)));
+      const update = (meal,field,val) => setDraft(p=>({...p,[meal]:{...p[meal],[field]:Number(val)}}));
+      const exportCSV = () => {
+        const rows = [["Data","Pasto","Kcal","Proteine(g)","Carboidrati(g)","Grassi(g)"]];
+        Object.entries(history).sort().forEach(([date,day]) => {
+          MEAL_KEYS.forEach(meal => {
+            const items = day[meal]||[];
+            if(!items.length) return;
+            const m = calcMacros(items, ingredients);
+            rows.push([date,MEAL_LABELS[meal],Math.round(m.kcal),Math.round(m.protein),Math.round(m.carbs),Math.round(m.fat)]);
+          });
+        });
+        const csv = rows.map(r=>r.join(",")).join("\n");
+        const blob = new Blob([csv],{type:"text/csv"});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a"); a.href=url; a.download="dieta_storico.csv"; a.click();
+      };
+      return (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:100,display:"flex",alignItems:"flex-end"}} onClick={onClose}>
+          <div style={{background:"#fff",borderRadius:"20px 20px 0 0",padding:"28px 20px 40px",width:"100%",maxWidth:480,margin:"0 auto",maxHeight:"80vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24}}>
+              <h2 style={{color:"#0f172a",fontSize:20,fontFamily:"'Playfair Display',serif",margin:0}}>Impostazioni</h2>
+              <button onClick={onClose} style={{background:"none",border:"none",color:"#94a3b8",fontSize:22,cursor:"pointer"}}>✕</button>
+            </div>
+            <p style={{color:"#64748b",fontSize:12,fontFamily:"'DM Mono',monospace",textTransform:"uppercase",letterSpacing:1,marginBottom:16}}>Target per pasto</p>
+            {MEAL_KEYS.map(meal=>(
+              <div key={meal} style={{display:"flex",alignItems:"center",marginBottom:14,gap:12}}>
+                <span style={{width:28}}>{MEAL_ICONS[meal]}</span>
+                <span style={{color:"#334155",fontSize:14,flex:1,fontFamily:"'DM Sans',sans-serif"}}>{MEAL_LABELS[meal]}</span>
+                {["kcal","protein","carbs"].map(f=>(
+                  <div key={f} style={{textAlign:"center"}}>
+                    <div style={{fontSize:9,color:"#94a3b8",fontFamily:"'DM Mono',monospace",marginBottom:3,textTransform:"uppercase"}}>{f==="kcal"?"kcal":f==="protein"?"prot":"carb"}</div>
+                    <input type="number" value={draft[meal][f]} onChange={e=>update(meal,f,e.target.value)}
+                      style={{width:54,background:"#f8fafc",border:"1px solid #cbd5e1",borderRadius:8,color:"#0f172a",fontSize:13,padding:"4px 6px",textAlign:"center",fontFamily:"'DM Mono',monospace"}}/>
+                  </div>
+                ))}
+              </div>
+            ))}
+            <button onClick={()=>{onSave(draft);onClose();}}
+              style={{width:"100%",background:"#16a34a",color:"#fff",border:"none",borderRadius:12,padding:"14px",fontSize:15,fontWeight:700,cursor:"pointer",marginTop:12,fontFamily:"'DM Sans',sans-serif"}}>
+              Salva impostazioni
+            </button>
+            <button onClick={exportCSV}
+              style={{width:"100%",background:"#f8fafc",color:"#64748b",border:"1px solid #e2e8f0",borderRadius:12,padding:"14px",fontSize:15,cursor:"pointer",marginTop:10,fontFamily:"'DM Sans',sans-serif"}}>
+              📥 Esporta storico CSV
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ── ADD FOOD MODAL ───────────────────────────────────────────────────────────
+    function AddFoodModal({ meal, ingredients, onAdd, onClose }) {
+      const [selId,setSelId] = useState("");
+      const [grams,setGrams] = useState("");
+      const preview = selId && grams ? calcMacros([{ingredientId:selId,grams:Number(grams)}],ingredients) : null;
+      return (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:90,display:"flex",alignItems:"center",justifyContent:"center",padding:20}} onClick={onClose}>
+          <div style={{background:"#fff",borderRadius:20,padding:24,width:"100%",maxWidth:380,boxShadow:"0 20px 60px rgba(0,0,0,0.15)"}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:20}}>
+              <h3 style={{color:"#0f172a",fontSize:18,fontFamily:"'Playfair Display',serif",margin:0}}>{MEAL_ICONS[meal]} {MEAL_LABELS[meal]}</h3>
+              <button onClick={onClose} style={{background:"none",border:"none",color:"#94a3b8",fontSize:20,cursor:"pointer"}}>✕</button>
+            </div>
+            <p style={{color:"#64748b",fontSize:11,fontFamily:"'DM Mono',monospace",textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>Ingrediente</p>
+            <select value={selId} onChange={e=>setSelId(e.target.value)}
+              style={{width:"100%",background:"#f8fafc",border:"1px solid #cbd5e1",borderRadius:10,color:selId?"#0f172a":"#94a3b8",fontSize:14,padding:"10px 12px",marginBottom:14,fontFamily:"'DM Sans',sans-serif"}}>
+              <option value="">Seleziona ingrediente...</option>
+              {ingredients.map(i=><option key={i.id} value={i.id}>{i.name}</option>)}
+            </select>
+            <p style={{color:"#64748b",fontSize:11,fontFamily:"'DM Mono',monospace",textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>Grammi</p>
+            <input type="number" placeholder="es. 150" value={grams} onChange={e=>setGrams(e.target.value)}
+              style={{width:"100%",background:"#f8fafc",border:"1px solid #cbd5e1",borderRadius:10,color:"#0f172a",fontSize:14,padding:"10px 12px",marginBottom:16,fontFamily:"'DM Mono',monospace"}}/>
+            {preview && (
+              <div style={{background:"#f0fdf4",borderRadius:10,padding:"10px 14px",marginBottom:16,display:"flex",gap:16,justifyContent:"space-around",border:"1px solid #bbf7d0"}}>
+                {[["kcal",Math.round(preview.kcal)],["prot",Math.round(preview.protein)+"g"],["carb",Math.round(preview.carbs)+"g"]].map(([l,v])=>(
+                  <div key={l} style={{textAlign:"center"}}>
+                    <div style={{color:"#64748b",fontSize:10,fontFamily:"'DM Mono',monospace",textTransform:"uppercase",marginBottom:2}}>{l}</div>
+                    <div style={{color:"#16a34a",fontSize:16,fontFamily:"'DM Mono',monospace",fontWeight:700}}>{v}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button disabled={!selId||!grams} onClick={()=>{onAdd({ingredientId:selId,grams:Number(grams)});onClose();}}
+              style={{width:"100%",background:selId&&grams?"#16a34a":"#e2e8f0",color:selId&&grams?"#fff":"#94a3b8",border:"none",borderRadius:12,padding:"13px",fontSize:15,fontWeight:700,cursor:selId&&grams?"pointer":"default",fontFamily:"'DM Sans',sans-serif",transition:"background 0.2s"}}>
+              Aggiungi
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ── ADD INGREDIENT MODAL ─────────────────────────────────────────────────────
+    function AddIngredientModal({ onSave, onClose, editData }) {
+      const [form,setForm] = useState(editData||{name:"",kcal:"",protein:"",carbs:"",fat:"",category:"altro"});
+      const set = (k,v) => setForm(p=>({...p,[k]:v}));
+      const valid = form.name && form.kcal && form.protein && form.carbs;
+      const fields = [
+        {k:"name",   label:"Nome",              placeholder:"es. Petto di pollo", type:"text"},
+        {k:"kcal",   label:"Kcal / 100g",        placeholder:"es. 165",            type:"number"},
+        {k:"protein",label:"Proteine / 100g (g)", placeholder:"es. 31",             type:"number"},
+        {k:"carbs",  label:"Carboidrati / 100g (g)",placeholder:"es. 0",           type:"number"},
+        {k:"fat",    label:"Grassi / 100g (g) — opzionale",placeholder:"es. 3.6",  type:"number"},
+      ];
+      return (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:90,display:"flex",alignItems:"center",justifyContent:"center",padding:20}} onClick={onClose}>
+          <div style={{background:"#fff",borderRadius:20,padding:24,width:"100%",maxWidth:380,boxShadow:"0 20px 60px rgba(0,0,0,0.15)",maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:20}}>
+              <h3 style={{color:"#0f172a",fontSize:18,fontFamily:"'Playfair Display',serif",margin:0}}>{editData?"Modifica":"Nuovo"} Ingrediente</h3>
+              <button onClick={onClose} style={{background:"none",border:"none",color:"#94a3b8",fontSize:20,cursor:"pointer"}}>✕</button>
+            </div>
+            {fields.map(({k,label,placeholder,type})=>(
+              <div key={k} style={{marginBottom:12}}>
+                <p style={{color:"#64748b",fontSize:11,fontFamily:"'DM Mono',monospace",textTransform:"uppercase",letterSpacing:1,margin:"0 0 5px"}}>{label}</p>
+                <input type={type} placeholder={placeholder} value={form[k]} onChange={e=>set(k,e.target.value)}
+                  style={{width:"100%",background:"#f8fafc",border:"1px solid #cbd5e1",borderRadius:10,color:"#0f172a",fontSize:14,padding:"9px 12px",fontFamily:type==="number"?"'DM Mono',monospace":"'DM Sans',sans-serif"}}/>
+              </div>
+            ))}
+            <div style={{marginBottom:18}}>
+              <p style={{color:"#64748b",fontSize:11,fontFamily:"'DM Mono',monospace",textTransform:"uppercase",letterSpacing:1,margin:"0 0 5px"}}>Categoria</p>
+              <select value={form.category} onChange={e=>set("category",e.target.value)}
+                style={{width:"100%",background:"#f8fafc",border:"1px solid #cbd5e1",borderRadius:10,color:"#0f172a",fontSize:14,padding:"9px 12px",fontFamily:"'DM Sans',sans-serif"}}>
+                {CATEGORY_OPTIONS.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
+            <button disabled={!valid}
+              onClick={()=>{onSave({id:editData?.id||Date.now().toString(),name:form.name,kcal:Number(form.kcal),protein:Number(form.protein),carbs:Number(form.carbs),fat:Number(form.fat)||0,category:form.category});onClose();}}
+              style={{width:"100%",background:valid?"#16a34a":"#e2e8f0",color:valid?"#fff":"#94a3b8",border:"none",borderRadius:12,padding:"13px",fontSize:15,fontWeight:700,cursor:valid?"pointer":"default",fontFamily:"'DM Sans',sans-serif"}}>
+              Salva ingrediente
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ── MEAL CARD ────────────────────────────────────────────────────────────────
+    function MealCard({ mealKey, items, ingredients, target, onAdd, onRemove, closed, defaultOpen }) {
+      const [open,setOpen] = useState(defaultOpen || false);
+      const macros = calcMacros(items,ingredients);
+      const pct = target.kcal ? (macros.kcal/target.kcal)*100 : 0;
+      return (
+        <div style={{background:"#fff",borderRadius:16,marginBottom:12,overflow:"hidden",border:"1px solid #e2e8f0",boxShadow:"0 1px 4px rgba(0,0,0,0.05)"}}>
+          <div style={{display:"flex",alignItems:"center",padding:"14px 16px",cursor:"pointer",gap:12}} onClick={()=>setOpen(o=>!o)}>
+            <ProgressRing pct={pct} size={52} color="#16a34a"/>
+            <div style={{flex:1}}>
+              <div style={{color:"#0f172a",fontSize:15,fontWeight:600,fontFamily:"'DM Sans',sans-serif"}}>{MEAL_ICONS[mealKey]} {MEAL_LABELS[mealKey]}</div>
+              <div style={{color:"#94a3b8",fontSize:12,fontFamily:"'DM Mono',monospace",marginTop:2}}>{Math.round(macros.kcal)} / {target.kcal} kcal</div>
+            </div>
+            <div style={{color:"#cbd5e1",fontSize:18,transition:"transform 0.2s",transform:open?"rotate(180deg)":"none"}}>▾</div>
+          </div>
+          {open && (
+            <div style={{padding:"0 16px 16px",borderTop:"1px solid #f1f5f9"}}>
+              <div style={{display:"flex",gap:10,marginBottom:12,marginTop:12}}>
+                <MacroBar label="Prot" value={macros.protein} target={target.protein} color="#3b82f6"/>
+                <MacroBar label="Carb" value={macros.carbs}   target={target.carbs}   color="#f59e0b"/>
+              </div>
+              {items.map((item,idx)=>{
+                const ing = ingredients.find(i=>i.id===item.ingredientId);
+                if(!ing) return null;
+                const m = calcMacros([item],ingredients);
+                return (
+                  <div key={idx} style={{display:"flex",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #f1f5f9"}}>
+                    <div style={{flex:1}}>
+                      <div style={{color:"#334155",fontSize:13,fontFamily:"'DM Sans',sans-serif"}}>{ing.name}</div>
+                      <div style={{color:"#94a3b8",fontSize:11,fontFamily:"'DM Mono',monospace"}}>{item.grams}g · {Math.round(m.kcal)} kcal · {Math.round(m.protein)}g prot</div>
+                    </div>
+                    {!closed && <button onClick={()=>onRemove(idx)} style={{background:"none",border:"none",color:"#cbd5e1",fontSize:18,cursor:"pointer",padding:"0 4px"}}>×</button>}
+                  </div>
+                );
+              })}
+              {!closed && (
+                <button onClick={onAdd}
+                  style={{width:"100%",marginTop:12,background:"#f8fafc",border:"1px dashed #cbd5e1",borderRadius:10,color:"#16a34a",fontSize:14,padding:"10px",cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>
+                  + Aggiungi alimento
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ── DIARY TAB ────────────────────────────────────────────────────────────────
+    function DiaryTab({ targets, ingredients }) {
+      const todayKey = getTodayKey();
+      const emptyMeals = Object.fromEntries(MEAL_KEYS.map(k=>[k,[]]));
+      const [offset, setOffset] = useState(0); // 0 = oggi, -1 = ieri, ecc.
+      const [addModal, setAddModal] = useState(null);
+
+      // Calcola la chiave del giorno corrente in base all'offset
+      function getDayKey(off) {
+        const d = new Date();
+        d.setDate(d.getDate() + off);
+        return d.toISOString().split("T")[0];
+      }
+      const dayKey = getDayKey(offset);
+      const isToday = dayKey === todayKey;
+      const isFuture = dayKey > todayKey;
+
+      const [diary, setDiary] = useState(() => load("diary_" + dayKey, { closed: false, meals: emptyMeals }));
+
+      // Ricarica il diario quando cambia il giorno
+      useEffect(() => {
+        setDiary(load("diary_" + dayKey, { closed: false, meals: emptyMeals }));
+      }, [dayKey]);
+
+      // Salva ogni volta che diary cambia
+      useEffect(() => {
+        if (!isFuture) save("diary_" + dayKey, diary);
+      }, [diary, dayKey]);
+
+      const totalMacros = Object.values(diary.meals).flat().reduce((acc, item) => {
+        const m = calcMacros([item], ingredients);
+        return { kcal: acc.kcal + m.kcal, protein: acc.protein + m.protein, carbs: acc.carbs + m.carbs };
+      }, { kcal: 0, protein: 0, carbs: 0 });
+      const totalTarget = Object.values(targets).reduce((acc, t) => ({
+        kcal: acc.kcal + t.kcal, protein: acc.protein + t.protein, carbs: acc.carbs + t.carbs
+      }), { kcal: 0, protein: 0, carbs: 0 });
+
+      const addItem = (meal, item) => {
+        setDiary(p => {
+          const updated = { ...p, meals: { ...p.meals, [meal]: [...p.meals[meal], item] } };
+          const ing = ingredients.find(i => i.id === item.ingredientId);
+          if (ing && ing.category && ing.category !== "altro") {
+            const wk = getWeekKey(new Date(dayKey)), wData = load("week_" + wk, {});
+            const group = PROTEIN_GROUPS.find(g => g.key === ing.category);
+            if (group) { const cur = wData[ing.category] || 0; if (cur < group.target) save("week_" + wk, { ...wData, [ing.category]: cur + 1 }); }
+          }
+          return updated;
+        });
+      };
+      const removeItem = (meal, idx) => setDiary(p => ({ ...p, meals: { ...p.meals, [meal]: p.meals[meal].filter((_, i) => i !== idx) } }));
+      const closeDay = () => {
+        const history = load("history", {});
+        save("history", { ...history, [dayKey]: diary.meals });
+        setDiary(p => ({ ...p, closed: true }));
+      };
+
+      const dateLabel = new Date(dayKey + "T12:00:00").toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" });
+      const dayLabel = isToday ? "Oggi" : offset === -1 ? "Ieri" : new Date(dayKey + "T12:00:00").toLocaleDateString("it-IT", { weekday: "long" });
+
+      return (
+        <div style={{ padding: "0 16px 100px" }}>
+          <div style={{ background: "#fff", borderRadius: 20, padding: "20px 20px 16px", marginBottom: 20, border: "1px solid #e2e8f0", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
+            {/* Navigazione giorni */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+              {/* Freccia sinistra */}
+              <button onClick={() => setOffset(o => o - 1)}
+                style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, width: 36, height: 36, fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b" }}>
+                ‹
+              </button>
+
+              {/* Data centrale */}
+              <div style={{ textAlign: "center", flex: 1 }}>
+                <div style={{ color: isToday ? "#16a34a" : "#94a3b8", fontSize: 11, fontFamily: "'DM Mono',monospace", textTransform: "uppercase", letterSpacing: 1 }}>
+                  {isToday ? "Oggi" : offset === -1 ? "Ieri" : dayLabel}
+                  {diary.closed && <span style={{ marginLeft: 6, color: "#16a34a" }}>✓</span>}
+                </div>
+                <div style={{ color: "#0f172a", fontSize: 17, fontFamily: "'Playfair Display',serif", marginTop: 2 }}>
+                  {new Date(dayKey + "T12:00:00").toLocaleDateString("it-IT", { day: "numeric", month: "long" })}
+                </div>
+              </div>
+
+              {/* Freccia destra */}
+              <button onClick={() => setOffset(o => o + 1)} disabled={isToday}
+                style={{ background: isToday ? "#f8fafc" : "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, width: 36, height: 36, fontSize: 16, cursor: isToday ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: isToday ? "#e2e8f0" : "#64748b" }}>
+                ›
+              </button>
+            </div>
+
+            {/* Kcal + macros */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ color: "#94a3b8", fontSize: 12, fontFamily: "'DM Mono',monospace" }}>Totale giornata</div>
+              <div style={{ textAlign: "right" }}>
+                <span style={{ color: totalMacros.kcal > totalTarget.kcal ? "#ef4444" : "#16a34a", fontSize: 22, fontFamily: "'DM Mono',monospace", fontWeight: 700 }}>{Math.round(totalMacros.kcal)}</span>
+                <span style={{ color: "#94a3b8", fontSize: 12, fontFamily: "'DM Mono',monospace" }}> / {totalTarget.kcal} kcal</span>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <MacroBar label="Proteine" value={totalMacros.protein} target={totalTarget.protein} color="#3b82f6" />
+              <MacroBar label="Carb" value={totalMacros.carbs} target={totalTarget.carbs} color="#f59e0b" />
+            </div>
+          </div>
+
+          {MEAL_KEYS.map(meal => (
+            <MealCard key={meal + dayKey} mealKey={meal} items={diary.meals[meal] || []} ingredients={ingredients}
+              target={targets[meal]} onAdd={() => setAddModal(meal)} onRemove={idx => removeItem(meal, idx)}
+              closed={false} defaultOpen={diary.closed} />
+          ))}
+
+          {!diary.closed && !isFuture && (
+            <button onClick={closeDay}
+              style={{ width: "100%", background: "#16a34a", color: "#fff", border: "none", borderRadius: 14, padding: "16px", fontSize: 16, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans',sans-serif", marginTop: 8 }}>
+              ✓ Chiudi giornata
+            </button>
+          )}
+
+          {addModal && <AddFoodModal meal={addModal} ingredients={ingredients} onAdd={item => addItem(addModal, item)} onClose={() => setAddModal(null)} />}
+        </div>
+      );
+    }
+
+    // ── INGREDIENTS TAB ──────────────────────────────────────────────────────────
+    function IngredientsTab({ ingredients, setIngredients }) {
+      const [modal,setModal] = useState(null);
+      const [search,setSearch] = useState("");
+      const filtered = ingredients.filter(i=>i.name.toLowerCase().includes(search.toLowerCase()));
+      const saveIng = (ing) => {
+        setIngredients(prev=>{ const exists=prev.find(i=>i.id===ing.id); const u=exists?prev.map(i=>i.id===ing.id?ing:i):[...prev,ing]; save("ingredients",u); return u; });
+      };
+      const deleteIng = (id) => setIngredients(prev=>{ const u=prev.filter(i=>i.id!==id); save("ingredients",u); return u; });
+
+      return (
+        <div style={{padding:"0 16px 100px"}}>
+          <div style={{display:"flex",gap:10,marginBottom:16}}>
+            <input placeholder="🔍 Cerca ingrediente..." value={search} onChange={e=>setSearch(e.target.value)}
+              style={{flex:1,background:"#fff",border:"1px solid #e2e8f0",borderRadius:12,color:"#0f172a",fontSize:14,padding:"10px 14px",fontFamily:"'DM Sans',sans-serif"}}/>
+            <button onClick={()=>setModal("new")}
+              style={{background:"#16a34a",border:"none",borderRadius:12,color:"#fff",fontSize:22,width:44,cursor:"pointer",fontWeight:700}}>+</button>
+          </div>
+          {filtered.length===0 && (
+            <div style={{textAlign:"center",color:"#94a3b8",fontSize:14,marginTop:60,fontFamily:"'DM Sans',sans-serif"}}>
+              Nessun ingrediente ancora.<br/>Premi + per aggiungerne uno.
+            </div>
+          )}
+          {filtered.map(ing=>{
+            const cat=CATEGORY_OPTIONS.find(c=>c.value===ing.category);
+            return (
+              <div key={ing.id} style={{background:"#fff",borderRadius:14,padding:"14px 16px",marginBottom:10,border:"1px solid #e2e8f0",display:"flex",alignItems:"center",gap:12,boxShadow:"0 1px 4px rgba(0,0,0,0.04)"}}>
+                <div style={{fontSize:24}}>{cat?.label.split(" ")[0]||"🔹"}</div>
+                <div style={{flex:1}}>
+                  <div style={{color:"#0f172a",fontSize:14,fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>{ing.name}</div>
+                  <div style={{color:"#94a3b8",fontSize:11,fontFamily:"'DM Mono',monospace",marginTop:2}}>
+                    {ing.kcal} kcal · {ing.protein}g prot · {ing.carbs}g carb{ing.fat?` · ${ing.fat}g grass`:""} /100g
+                  </div>
+                </div>
+                <button onClick={()=>setModal(ing)} style={{background:"none",border:"none",color:"#94a3b8",fontSize:16,cursor:"pointer"}}>✏️</button>
+                <button onClick={()=>deleteIng(ing.id)} style={{background:"none",border:"none",color:"#94a3b8",fontSize:16,cursor:"pointer"}}>🗑️</button>
+              </div>
+            );
+          })}
+          {modal && <AddIngredientModal editData={modal==="new"?null:modal} onSave={saveIng} onClose={()=>setModal(null)}/>}
+        </div>
+      );
+    }
+
+    // ── WEEK TAB ─────────────────────────────────────────────────────────────────
+    function WeekTab({ targets, ingredients }) {
+      const wk = getWeekKey();
+      const [wData,setWData] = useState(()=>load("week_"+wk,{}));
+      useEffect(()=>{ const id=setInterval(()=>setWData(load("week_"+wk,{})),2000); return ()=>clearInterval(id); },[]);
+
+      const weekDays = Array.from({length:7},(_,i)=>{ const d=new Date(wk); d.setDate(d.getDate()+i); return d.toISOString().split("T")[0]; });
+      const weeklyTotals = weekDays.reduce((acc,day)=>{
+        const dayData=load("diary_"+day,{meals:Object.fromEntries(MEAL_KEYS.map(k=>[k,[]]))});
+        const allItems=Object.values(dayData.meals).flat();
+        const m=calcMacros(allItems,ingredients);
+        return {kcal:acc.kcal+m.kcal,protein:acc.protein+m.protein,carbs:acc.carbs+m.carbs,days:acc.days+(allItems.length>0?1:0)};
+      },{kcal:0,protein:0,carbs:0,days:0});
+      const totalWeekTargets = Object.values(targets).reduce((acc,t)=>({kcal:acc.kcal+t.kcal,protein:acc.protein+t.protein,carbs:acc.carbs+t.carbs}),{kcal:0,protein:0,carbs:0});
+
+      const weekStart=new Date(wk), weekEnd=new Date(wk); weekEnd.setDate(weekEnd.getDate()+6);
+      const fmt=d=>d.toLocaleDateString("it-IT",{day:"numeric",month:"short"});
+
+      return (
+        <div style={{padding:"0 16px 100px"}}>
+          {/* Header */}
+          <div style={{background:"#fff",borderRadius:16,padding:"14px 16px",marginBottom:14,border:"1px solid #e2e8f0",boxShadow:"0 1px 4px rgba(0,0,0,0.05)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <div style={{color:"#94a3b8",fontSize:11,fontFamily:"'DM Mono',monospace",textTransform:"uppercase",letterSpacing:1}}>Settimana corrente</div>
+              <div style={{color:"#0f172a",fontSize:14,fontFamily:"'DM Sans',sans-serif",marginTop:2}}>{fmt(weekStart)} – {fmt(weekEnd)}</div>
+            </div>
+            <div style={{textAlign:"right"}}>
+              <div style={{color:"#16a34a",fontSize:13,fontFamily:"'DM Mono',monospace",fontWeight:700}}>
+                {PROTEIN_GROUPS.reduce((acc,g)=>acc+Math.min(wData[g.key]||0,g.target),0)} / {PROTEIN_GROUPS.reduce((acc,g)=>acc+g.target,0)} slot
+              </div>
+              <div style={{color:"#94a3b8",fontSize:11,fontFamily:"'DM Mono',monospace"}}>{weeklyTotals.days} giorni tracciati</div>
+            </div>
+          </div>
+
+          {/* Intake settimanale */}
+          <div style={{background:"#f0fdf4",borderRadius:16,padding:"16px",marginBottom:20,border:"1px solid #bbf7d0"}}>
+            <div style={{color:"#166534",fontSize:12,fontFamily:"'DM Mono',monospace",textTransform:"uppercase",letterSpacing:1,marginBottom:12}}>Intake settimana</div>
+            <div style={{display:"flex",justifyContent:"space-around",marginBottom:14}}>
+              {[
+                {label:"Kcal totali",  value:Math.round(weeklyTotals.kcal), target:totalWeekTargets.kcal*7},
+                {label:"Media/giorno", value:weeklyTotals.days?Math.round(weeklyTotals.kcal/weeklyTotals.days):0, target:totalWeekTargets.kcal},
+              ].map(({label,value,target})=>(
+                <div key={label} style={{textAlign:"center"}}>
+                  <div style={{color:"#166534",fontSize:22,fontFamily:"'DM Mono',monospace",fontWeight:700}}>{value}</div>
+                  <div style={{color:"#4ade80",fontSize:10,fontFamily:"'DM Mono',monospace",marginTop:2}}>/ {target} target</div>
+                  <div style={{color:"#86efac",fontSize:10,fontFamily:"'DM Mono',monospace"}}>{label}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{display:"flex",gap:10,marginBottom:14}}>
+              <MacroBar label="Proteine"    value={Math.round(weeklyTotals.protein)} target={totalWeekTargets.protein*7} color="#3b82f6"/>
+              <MacroBar label="Carboidrati" value={Math.round(weeklyTotals.carbs)}   target={totalWeekTargets.carbs*7}   color="#f59e0b"/>
+            </div>
+            {/* Dettaglio giorni */}
+            <div style={{color:"#166534",fontSize:11,fontFamily:"'DM Mono',monospace",textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>Dettaglio giorni</div>
+            {weekDays.map(day=>{
+              const dayData=load("diary_"+day,{meals:Object.fromEntries(MEAL_KEYS.map(k=>[k,[]]))});
+              const allItems=Object.values(dayData.meals).flat();
+              const m=calcMacros(allItems,ingredients);
+              const hasData=allItems.length>0;
+              const pct=Math.min((m.kcal/totalWeekTargets.kcal)*100,100);
+              const d=new Date(day), isToday=day===getTodayKey();
+              return (
+                <div key={day} style={{display:"flex",alignItems:"center",marginBottom:6,gap:8}}>
+                  <div style={{width:60,fontSize:11,fontFamily:"'DM Mono',monospace",color:isToday?"#16a34a":"#64748b",fontWeight:isToday?700:400}}>
+                    {d.toLocaleDateString("it-IT",{weekday:"short",day:"numeric"})}
+                  </div>
+                  <div style={{flex:1,height:8,background:"#dcfce7",borderRadius:4,overflow:"hidden"}}>
+                    <div style={{height:"100%",width:`${pct}%`,background:hasData?"#16a34a":"transparent",borderRadius:4,transition:"width 0.4s"}}/>
+                  </div>
+                  <div style={{width:50,textAlign:"right",fontSize:11,fontFamily:"'DM Mono',monospace",color:hasData?"#166534":"#94a3b8"}}>
+                    {hasData?Math.round(m.kcal):"–"}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Tracker alimenti */}
+          <div style={{color:"#64748b",fontSize:11,fontFamily:"'DM Mono',monospace",textTransform:"uppercase",letterSpacing:1,marginBottom:10}}>Alimenti settimanali</div>
+          {PROTEIN_GROUPS.map(group=>{
+            const count=wData[group.key]||0, pct=Math.round((count/group.target)*100);
+            return (
+              <div key={group.key} style={{background:"#fff",borderRadius:16,padding:"16px",marginBottom:12,border:"1px solid #e2e8f0",boxShadow:"0 1px 4px rgba(0,0,0,0.04)"}}>
+                <div style={{display:"flex",alignItems:"center",marginBottom:10}}>
+                  <span style={{fontSize:26,marginRight:12}}>{group.emoji}</span>
+                  <div style={{flex:1}}>
+                    <div style={{color:"#0f172a",fontSize:15,fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>{group.label}</div>
+                    <div style={{color:"#94a3b8",fontSize:12,fontFamily:"'DM Mono',monospace"}}>{count} / {group.target} volte</div>
+                  </div>
+                  <div style={{display:"flex",gap:6}}>
+                    {Array.from({length:group.target}).map((_,i)=>(
+                      <div key={i} style={{width:28,height:28,borderRadius:"50%",background:i<count?"#16a34a":"#f1f5f9",border:i<count?"none":"1px solid #e2e8f0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,color:"#fff"}}>
+                        {i<count?"✓":""}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div style={{height:5,background:"#e2e8f0",borderRadius:3,overflow:"hidden"}}>
+                  <div style={{height:"100%",width:`${Math.min(pct,100)}%`,background:count>=group.target?"#16a34a":"#3b82f6",borderRadius:3,transition:"width 0.4s"}}/>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    // ── APP ──────────────────────────────────────────────────────────────────────
+    function App() {
+      const [tab,setTab]             = useState("diary");
+      const [showSettings,setShowSettings] = useState(false);
+      const [targets,setTargets]     = useState(()=>load("targets",DEFAULT_TARGETS));
+      const [ingredients,setIngredients] = useState(()=>load("ingredients",[]));
+      const history = load("history",{});
+      const saveTargets = (t)=>{ setTargets(t); save("targets",t); };
+
+      const TAB_CONFIG = [
+        {key:"diary",       label:"Diario",      icon:"📋"},
+        {key:"ingredients", label:"Ingredienti", icon:"🥦"},
+        {key:"week",        label:"Settimana",   icon:"📅"},
+      ];
+
+      return (
+        <div style={{background:"#f0f4f8",minHeight:"100vh",maxWidth:480,margin:"0 auto",fontFamily:"'DM Sans',sans-serif",position:"relative"}}>
+          {/* Top bar */}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"20px 20px 16px",position:"sticky",top:0,background:"#fff",zIndex:50,borderBottom:"1px solid #e2e8f0",boxShadow:"0 1px 8px rgba(0,0,0,0.06)"}}>
+            <div>
+              <div style={{color:"#16a34a",fontSize:11,fontFamily:"'DM Mono',monospace",textTransform:"uppercase",letterSpacing:2}}>Diet Tracker</div>
+              <div style={{color:"#0f172a",fontSize:22,fontFamily:"'Playfair Display',serif"}}>
+                {tab==="diary"?"Il mio diario":tab==="ingredients"?"Ingredienti":"Settimana"}
+              </div>
+            </div>
+            <button onClick={()=>setShowSettings(true)}
+              style={{background:"#dcfce7",border:"none",borderRadius:12,color:"#16a34a",fontSize:20,width:44,height:44,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              ⚙️
+            </button>
+          </div>
+
+          {/* Content */}
+          <div style={{paddingTop:16}}>
+            {tab==="diary"       && <DiaryTab targets={targets} ingredients={ingredients}/>}
+            {tab==="ingredients" && <IngredientsTab ingredients={ingredients} setIngredients={setIngredients}/>}
+            {tab==="week"        && <WeekTab targets={targets} ingredients={ingredients}/>}
+          </div>
+
+          {/* Bottom nav */}
+          <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:"#fff",borderTop:"1px solid #e2e8f0",display:"flex",zIndex:60,boxShadow:"0 -2px 12px rgba(0,0,0,0.07)"}}>
+            {TAB_CONFIG.map(t=>(
+              <button key={t.key} onClick={()=>setTab(t.key)}
+                style={{flex:1,background:"none",border:"none",padding:"12px 0 16px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+                <span style={{fontSize:22}}>{t.icon}</span>
+                <span style={{fontSize:11,fontFamily:"'DM Mono',monospace",color:tab===t.key?"#16a34a":"#cbd5e1",textTransform:"uppercase",letterSpacing:1,transition:"color 0.2s"}}>{t.label}</span>
+                {tab===t.key && <div style={{width:20,height:3,background:"#16a34a",borderRadius:2}}/>}
+              </button>
+            ))}
+          </div>
+
+          {showSettings && <SettingsPanel targets={targets} onSave={saveTargets} onClose={()=>setShowSettings(false)} history={history} ingredients={ingredients}/>}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+  </script>
+</body>
+</html>
